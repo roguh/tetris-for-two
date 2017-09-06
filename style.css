@@ -1,0 +1,46 @@
+html,head,body { padding:0; margin:0; }
+
+body { font-family: calibri, helvetica, arial, sans-serif; }
+
+main h2, main h3 {
+    margin: 0;
+}
+
+main#tetris {
+}
+
+div.board {
+    text-align: center;
+    font-family: monospace;
+    font-size: 1.92vw; /* 1/2 * 100/(2 + length of the board) */
+    font-weight: bold;
+    float: left;
+    width: 45%;
+    padding: 1vw 1.92vw; 
+    border: 1px solid black;
+}
+
+div.board button {
+    font-size: 1em;
+    margin: 1vw;
+    padding: 1vw;
+}
+
+/* TODO use nth-child or take team into account */
+
+#player1 button {
+    border: solid 3px black;
+    background: white;
+}
+
+#player2 {
+    color: white;
+    background: black;
+}
+
+#player2 button {
+    color: white;
+    border: solid 3px white;
+    font-weight: bold;
+    background: black;
+}
