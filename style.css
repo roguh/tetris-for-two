@@ -12,35 +12,80 @@ main#tetris {
 div.board {
     text-align: center;
     font-family: monospace;
-    font-size: 1.92vw; /* 1/2 * 100/(2 + length of the board) */
     font-weight: bold;
     float: left;
     width: 45%;
     padding: 1vw 1.92vw; 
+    font-size: 1.4em;
     border: 1px solid black;
 }
 
 div.board button {
     font-size: 1em;
-    margin: 1vw;
-    padding: 1vw;
+    margin: 0.5vw;
+    padding: 0.1vw 1vw;
 }
 
 /* TODO use nth-child or take team into account */
 
-#player1 button {
+#team1 button {
     border: solid 3px black;
     background: white;
 }
 
-#player2 {
+#team2 {
     color: white;
     background: black;
 }
 
-#player2 button {
+#team2 button {
     color: white;
     border: solid 3px white;
     font-weight: bold;
     background: black;
 }
+
+.grid div {
+    margin: 0;
+    padding: 0;
+    font-size: 1em;
+    line-height: 0;
+}
+
+.cell { 
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+} 
+
+#team1 .cell {
+    border: 0.15em solid #bbb;
+}
+
+#team2 .cell {
+    border: 0.15em solid #333;
+}
+
+/* 
+ns =  [ "I", "S", "Z", "L", "J", "T", "O" ]
+
+cs = [eval(c.replace('rgb','')) for c in ['rgb(215,48,39)','rgb(252,141,89)','rgb(254,224,144)','rgb(255,255,191)','rgb(224,243,248)','rgb(145,191,219)','rgb(69,117,180)']]
+
+[print("#team1 .shape{} {{ color: rgb{} }}".format(n, tuple((255 - i for i in c)))) for (n, c) in zip(ns, cs)]
+
+[print("#team2 .shape{} {{ color: rgb{} }}".format(n, c)) for (n, c) in zip(ns, cs)]
+*/
+
+.edge, .topMargin { background-color: #888; }
+
+#team1 .tetromino { 
+    border-color: black; 
+}
+
+.board .tetrominoI { background-color: rgb(215, 48, 39) }
+.board .tetrominoS { background-color: rgb(252, 141, 89) }
+.board .tetrominoZ { background-color: rgb(254, 224, 144) }
+.board .tetrominoL { background-color: rgb(255, 255, 191) }
+.board .tetrominoJ { background-color: rgb(224, 243, 248) }
+.board .tetrominoT { background-color: rgb(145, 191, 219) }
+.board .tetrominoO { background-color: rgb(69, 117, 180) }

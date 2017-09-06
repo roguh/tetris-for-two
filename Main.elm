@@ -3,7 +3,7 @@
 -- TODO init config: adjust field height
 -- TODO detect GAME OVER
 -- TODO detect START GAME
--- TODO ghost piece
+-- TODO ghost piece using css3 animations
 -- TODO hold piece
 -- TODO show next 3 pieces
 -- TODO better rewards for combos (timer)
@@ -15,6 +15,7 @@
 -- TODO hard drop (find maximum y, then translate by that much)
 -- TODO CSS3 animations
 -- TODO good tetris AI
+-- TODO use images or board+background spans instead of unicode-art
 
 
 module Main exposing (main)
@@ -59,7 +60,7 @@ addPos pos1 pos2 =
 
 type Block
     = Edge
-    | Full
+    | Full ShapeName
     | Empty
 
 
@@ -102,7 +103,7 @@ type alias Board =
 
 
 type alias Model =
-    { frame : FrameNumber, paused : Bool, boards : List Board }
+    { times : ( Time, Time ), frame : FrameNumber, paused : Bool, boards : List Board }
 
 
 type Dir
@@ -132,7 +133,7 @@ type Input
 boardHeight =
     -- TODO make height configurable
     -- note top 2 rows must be hidden
-    22 + boardMargin * 2
+    44 + boardMargin * 2
 
 
 boardWidth =
@@ -149,7 +150,7 @@ numPlayers =
 
 
 fps =
-    12
+    24
 
 
 normalSpeed =
@@ -162,7 +163,7 @@ init nPlayers =
         boards =
             initBoards nPlayers
     in
-        ( { frame = 0, paused = False, boards = boards }
+        ( { times = ( 0, 1 ), frame = 0, paused = False, boards = boards }
         , Cmd.batch <|
             [ -- give the board the browser's focus
               -- ignore errors from Dom.focus
@@ -329,7 +330,15 @@ view model =
             , onKeyUp upControls
             ]
           <|
-            List.indexedMap viewBoard model.boards
+            [ div []
+                [ let
+                    ( new, old ) =
+                        model.times
+                  in
+                    text <| "FPS: " ++ toString (round <| 1 / (Time.inSeconds (new - old)))
+                ]
+            ]
+                ++ (List.indexedMap viewBoard model.boards)
         ]
 
 
@@ -338,42 +347,48 @@ viewBoard playerNum board =
         grid =
             -- deleteEdges <|
             Array2D.indexedMap
-                (\row col c ->
+                (\row col cell ->
                     let
-                        has =
-                            case board.tetromino of
-                                Just tetr ->
+                        isFull =
+                            cellName /= Nothing
+
+                        thisCellName =
+                            case cell of
+                                Full cellName ->
+                                    Just cellName
+
+                                _ ->
+                                    Nothing
+
+                        cellName =
+                            unwrapMaybeWith thisCellName
+                                (\tetr ->
                                     -- if a tetromino exists
                                     -- and it is located at this position, then draw it
                                     case Array2D.get (row - tetr.pos.y) (col - tetr.pos.x) tetr.shape of
-                                        Just cell ->
-                                            cell /= Empty
+                                        -- either there's a Full piece at this location
+                                        Just (Full shapeName) ->
+                                            Just shapeName
 
                                         _ ->
-                                            False
+                                            thisCellName
+                                )
+                                board.tetromino
 
-                                _ ->
-                                    False
-                    in
-                        span []
-                            [ text
-                                << (\t -> t ++ " ")
-                              <|
+                        attrs =
+                            List.map class <|
                                 if row < 2 then
-                                    "-"
-                                else if c == Edge then
-                                    "•"
-                                else if c == Empty then
-                                    if has then
-                                        "o"
-                                    else
-                                        "·"
-                                else if has then
-                                    -- GAME OVER!!!
-                                    "G"
+                                    [ "topMargin" ]
+                                else if isFull then
+                                    [ "tetromino", "tetromino" ++ (Maybe.withDefault "" cellName) ]
+                                else if cell == Edge then
+                                    [ "edge" ]
+                                else if cell == Empty then
+                                    [ "empty" ]
                                 else
-                                    "X"
-                            ]
+                                    []
+                    in
+                        div ((class "cell") :: attrs) []
                 )
                 board.grid
 
@@ -386,7 +401,7 @@ viewBoard playerNum board =
                 )
     in
         div
-            [ id <| "player" ++ toString (1 + playerNum)
+            [ id <| "team" ++ toString (1 + playerNum % 2)
             , class "board"
             ]
         <|
@@ -401,7 +416,7 @@ viewBoard playerNum board =
                 ]
             , h3 [] [ text <| "Score " ++ toString board.score ]
             ]
-                ++ [ div [] <|
+                ++ [ div [ class "grid" ] <|
                         Array.toList <|
                             Array.map (\row -> div [] <| Array.toList row) grid.data
                    , div [] <|
@@ -431,7 +446,8 @@ update input ({ boards, frame } as m) =
                 Tick tNew ->
                     if not m.paused then
                         { m
-                            | frame = frame + 1
+                            | times = ( tNew, Tuple.first m.times )
+                            , frame = frame + 1
                             , boards = List.map (updateScore frame << dropTetromino frame) boards
                         }
                     else
@@ -547,20 +563,16 @@ merge frame { shape, pos } ({ grid } as board) =
                         then
                             gridCell
                         else
-                            -- get the part
-                            let
-                                shapeCell =
-                                    Array2D.get (row - pos.y) (col - pos.x) shape
-                            in
-                                -- add any full blocks in the part to the grid
-                                unwrapMaybeWith Empty
-                                    (\c ->
-                                        if c == Empty then
-                                            gridCell
-                                        else
-                                            c
-                                    )
-                                    shapeCell
+                            -- add any full blocks in the part to the grid
+                            unwrapMaybeWith Empty
+                                (\shapeCell ->
+                                    if shapeCell == Empty then
+                                        gridCell
+                                    else
+                                        shapeCell
+                                )
+                                -- get the part
+                                (Array2D.get (row - pos.y) (col - pos.x) shape)
                     )
                     grid
         }
@@ -740,24 +752,24 @@ getShape s =
 
 shapes =
     let
-        convert c =
+        convert name c =
             if c == 0 then
                 Empty
             else
-                Full
+                Full name
 
-        conv =
-            List.map (List.map convert)
+        conv ( name, grid ) =
+            ( name, List.map (List.map (convert name)) grid )
 
         primitives =
             -- the blank rows and columns are for the Tetris Super Rotation System
-            [ ( "I", conv [ [ 0, 0, 0, 0 ], [ 1, 1, 1, 1 ], [ 0, 0, 0, 0 ], [ 0, 0, 0, 0 ] ] )
-            , ( "S", conv [ [ 0, 1, 1 ], [ 1, 1, 0 ], [ 0, 0, 0 ] ] )
-            , ( "Z", conv [ [ 1, 1, 0 ], [ 0, 1, 1 ], [ 0, 0, 0 ] ] )
-            , ( "L", conv [ [ 0, 0, 1 ], [ 1, 1, 1 ], [ 0, 0, 0 ] ] )
-            , ( "J", conv [ [ 1, 0, 0 ], [ 1, 1, 1 ], [ 0, 0, 0 ] ] )
-            , ( "T", conv [ [ 0, 1, 0 ], [ 1, 1, 1 ], [ 0, 0, 0 ] ] )
-            , ( "O", conv [ [ 1, 1 ], [ 1, 1 ] ] )
+            [ conv ( "I", [ [ 0, 0, 0, 0 ], [ 1, 1, 1, 1 ], [ 0, 0, 0, 0 ], [ 0, 0, 0, 0 ] ] )
+            , conv ( "S", [ [ 0, 1, 1 ], [ 1, 1, 0 ], [ 0, 0, 0 ] ] )
+            , conv ( "Z", [ [ 1, 1, 0 ], [ 0, 1, 1 ], [ 0, 0, 0 ] ] )
+            , conv ( "L", [ [ 0, 0, 1 ], [ 1, 1, 1 ], [ 0, 0, 0 ] ] )
+            , conv ( "J", [ [ 1, 0, 0 ], [ 1, 1, 1 ], [ 0, 0, 0 ] ] )
+            , conv ( "T", [ [ 0, 1, 0 ], [ 1, 1, 1 ], [ 0, 0, 0 ] ] )
+            , conv ( "O", [ [ 1, 1 ], [ 1, 1 ] ] )
             ]
 
         -- rotate a 2D array
