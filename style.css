@@ -6,24 +6,39 @@ main h2, main h3 {
     margin: 0;
 }
 
-main#tetris {
+.messages {
+    text-align: center;
+    font-size: 2em;
+    font-weight: bold;
 }
 
-div.board {
+.paused .board {
+    background-color: grey !important;
+}
+
+.board {
+    transition: background-color 0.5s ease;
     text-align: center;
     font-family: monospace;
     font-weight: bold;
     float: left;
     width: 45%;
     padding: 1vw 1.92vw; 
-    font-size: 1.4em;
+    font-size: 1.0em;
     border: 1px solid black;
 }
 
-div.board button {
+.board button {
     font-size: 1em;
     margin: 0.5vw;
     padding: 0.1vw 1vw;
+      -webkit-touch-callout: none; /* iOS Safari */
+    -webkit-user-select: none; /* Safari */
+     -khtml-user-select: none; /* Konqueror HTML */
+       -moz-user-select: none; /* Firefox */
+        -ms-user-select: none; /* Internet Explorer/Edge */
+            user-select: none; /* Non-prefixed version, currently
+                                  supported by Chrome and Opera */
 }
 
 /* TODO use nth-child or take team into account */
@@ -58,12 +73,14 @@ div.board button {
     height: 1em;
 } 
 
+.clearedRow { transition: background-color 0.5s; }
+
 #team1 .cell {
     border: 0.15em solid #bbb;
 }
 
 #team2 .cell {
-    border: 0.15em solid #333;
+    border: 0.15em solid #222;
 }
 
 /* 
@@ -78,14 +95,27 @@ cs = [eval(c.replace('rgb','')) for c in ['rgb(215,48,39)','rgb(252,141,89)','rg
 
 .edge, .topMargin { background-color: #888; }
 
-#team1 .tetromino { 
-    border-color: black; 
+.ghost { 
+    -webkit-transition: background-color 0.2s;
+    transition: background-color 0.2s;
 }
 
-.board .tetrominoI { background-color: rgb(215, 48, 39) }
-.board .tetrominoS { background-color: rgb(252, 141, 89) }
-.board .tetrominoZ { background-color: rgb(254, 224, 144) }
-.board .tetrominoL { background-color: rgb(255, 255, 191) }
-.board .tetrominoJ { background-color: rgb(224, 243, 248) }
-.board .tetrominoT { background-color: rgb(145, 191, 219) }
-.board .tetrominoO { background-color: rgb(69, 117, 180) }
+#team1 .ghost { 
+    background-color: black;
+    border-color: orange; 
+}
+#team2 .ghost { 
+    background-color: white;
+    border-color: #ddd;
+}
+
+#team1 .tetromino { border-color: black; }
+#team2 .tetromino { border-color: black; }
+
+.tetrominoI { background-color: rgb(215, 48, 39) }
+.tetrominoS { background-color: rgb(252, 141, 89) }
+.tetrominoZ { background-color: rgb(254, 224, 144) }
+.tetrominoL { background-color: rgb(255, 255, 191) }
+.tetrominoJ { background-color: rgb(224, 243, 248) }
+.tetrominoT { background-color: rgb(145, 191, 219) }
+.tetrominoO { background-color: rgb(69, 117, 180) }

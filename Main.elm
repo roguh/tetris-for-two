@@ -20,9 +20,10 @@
 
 module Main exposing (main)
 
+import Window exposing (Size)
 import Html exposing (Html, Attribute, Attribute, main_, button, div, text, h3, h2, span)
-import Html.Events exposing (on, keyCode, onMouseDown)
-import Html.Attributes exposing (attribute, class, id)
+import Html.Events exposing (on, keyCode, onMouseDown, onMouseUp)
+import Html.Attributes exposing (attribute, class, id, style)
 import Dom exposing (focus)
 import Task
 import Time exposing (Time, second)
@@ -95,15 +96,16 @@ type alias Board =
     , gameOver : Bool
     , clearedRows : List Int
     , tetris : Maybe FrameNumber
-    , speed : ( FrameNumber, DropSpeed ) -- track when speed changed
+    , speed : DropSpeed
     , grid : Grid
+    , ghost : Maybe Tetromino
     , tetromino : Maybe Tetromino -- should replace with a list of tetrominos
     , nextTetromino : Maybe ShapeName
     }
 
 
 type alias Model =
-    { times : ( Time, Time ), frame : FrameNumber, paused : Bool, boards : List Board }
+    { windowSize : Size, times : ( Time, Time ), frame : FrameNumber, paused : Bool, boards : List Board }
 
 
 type Dir
@@ -115,6 +117,7 @@ type PlayerInput
     = Translate Dir
     | Rotate Dir
     | SoftDrop
+    | StopSoftDrop
     | HardDrop
 
 
@@ -125,6 +128,7 @@ type alias BoardID =
 type Input
     = PlayerInputs ( BoardID, PlayerInput )
     | Tick Time
+    | Resize Size
     | Pause
     | AddTetrominos (List (Maybe ShapeName))
     | None
@@ -133,7 +137,7 @@ type Input
 boardHeight =
     -- TODO make height configurable
     -- note top 2 rows must be hidden
-    44 + boardMargin * 2
+    22 + boardMargin * 2
 
 
 boardWidth =
@@ -163,7 +167,7 @@ init nPlayers =
         boards =
             initBoards nPlayers
     in
-        ( { times = ( 0, 1 ), frame = 0, paused = False, boards = boards }
+        ( { windowSize = { width = 200, height = 200 }, times = ( 0, 1 ), frame = 0, paused = False, boards = boards }
         , Cmd.batch <|
             [ -- give the board the browser's focus
               -- ignore errors from Dom.focus
@@ -172,6 +176,16 @@ init nPlayers =
             -- generate enough tetrominos for all players
             , randTetrominos boards
             , randTetrominos boards
+            , Task.attempt
+                (\res ->
+                    case res of
+                        Ok sz ->
+                            Resize sz
+
+                        _ ->
+                            None
+                )
+                Window.size
             ]
         )
 
@@ -182,7 +196,7 @@ initBoards nPlayers =
         , clearedRows = []
         , gameOver = False
         , tetris = Nothing
-        , speed = ( 0, Normal )
+        , speed = Normal
         , grid =
             initialize boardHeight
                 boardWidth
@@ -192,6 +206,7 @@ initBoards nPlayers =
                     else
                         Empty
                 )
+        , ghost = Nothing
         , tetromino = Nothing
         , nextTetromino = Nothing
         }
@@ -240,7 +255,10 @@ makeTetromino name degrees =
 
 subscriptions : Model -> Sub Input
 subscriptions model =
-    Time.every (second / fps) Tick
+    Sub.batch
+        [ Time.every (second / fps) Tick
+        , Window.resizes Resize
+        ]
 
 
 onKeyUp : (Int -> Input) -> Attribute Input
@@ -277,20 +295,16 @@ toTagger cs key =
         unwrapMaybeWith None PlayerInputs (Dict.get key controls)
 
 
-holdControls =
+upControls =
     toTagger
-        [ ( [ 38, 87 ]
-          , -- up arrow
-            HardDrop
-          )
-        , ( [ 40, 83 ]
+        [ ( [ 40, 83 ]
           , -- down arrow
-            SoftDrop
+            StopSoftDrop
           )
         ]
 
 
-upControls key =
+downControls key =
     if key == 80 then
         Pause
     else
@@ -311,6 +325,14 @@ upControls key =
               , -- comma
                 Rotate Left
               )
+            , ( [ 40, 83 ]
+              , -- down arrow
+                SoftDrop
+              )
+            , ( [ 38, 87 ]
+              , -- up arrow
+                HardDrop
+              )
             ]
             key
 
@@ -326,8 +348,14 @@ view model =
         , main_
             [ id "tetris"
             , attribute "tabindex" "0"
-            , onKeyDown holdControls
+            , class
+                (if model.paused then
+                    "paused"
+                 else
+                    ""
+                )
             , onKeyUp upControls
+            , onKeyDown downControls
             ]
           <|
             [ div []
@@ -337,12 +365,18 @@ view model =
                   in
                     text <| "FPS: " ++ toString (round <| 1 / (Time.inSeconds (new - old)))
                 ]
+            , div [ class "messages" ]
+                [ if model.paused then
+                    text "Paused!"
+                  else
+                    text ""
+                ]
             ]
-                ++ (List.indexedMap viewBoard model.boards)
+                ++ (List.indexedMap (viewBoard <| min model.windowSize.width model.windowSize.height) model.boards)
         ]
 
 
-viewBoard playerNum board =
+viewBoard minSize playerNum board =
     let
         grid =
             -- deleteEdges <|
@@ -375,14 +409,28 @@ viewBoard playerNum board =
                                 )
                                 board.tetromino
 
+                        isGhost =
+                            unwrapMaybeWith False
+                                (\ghost ->
+                                    case Array2D.get (row - ghost.pos.y) (col - ghost.pos.x) ghost.shape of
+                                        Just (Full _) ->
+                                            True
+
+                                        _ ->
+                                            False
+                                )
+                                board.ghost
+
                         attrs =
                             List.map class <|
                                 if row < 2 then
                                     [ "topMargin" ]
-                                else if isFull then
-                                    [ "tetromino", "tetromino" ++ (Maybe.withDefault "" cellName) ]
                                 else if cell == Edge then
                                     [ "edge" ]
+                                else if isFull then
+                                    [ "tetromino", "tetromino" ++ (Maybe.withDefault "" cellName) ]
+                                else if isGhost then
+                                    [ "ghost" ]
                                 else if cell == Empty then
                                     [ "empty" ]
                                 else
@@ -416,17 +464,39 @@ viewBoard playerNum board =
                 ]
             , h3 [] [ text <| "Score " ++ toString board.score ]
             ]
-                ++ [ div [ class "grid" ] <|
+                ++ [ div
+                        [ class "grid"
+                        , style [ ( "font-size", (toString <| minSize // boardHeight // 2) ++ "px" ) ]
+                        ]
+                     <|
                         Array.toList <|
-                            Array.map (\row -> div [] <| Array.toList row) grid.data
+                            Array.indexedMap
+                                (\rowIndex row ->
+                                    div
+                                        [ if List.member rowIndex board.clearedRows then
+                                            class "clearedRow"
+                                          else
+                                            class ""
+                                        ]
+                                    <|
+                                        Array.toList row
+                                )
+                                grid.data
                    , div [] <|
                         makeButtons
                             [ Translate Left, Rotate Left, Rotate Right, Translate Right ]
                             [ "↼", "⤺", "⤻", "⇀" ]
                    , div [] <|
-                        makeButtons
-                            [ SoftDrop, HardDrop ]
-                            [ "fast", "drop" ]
+                        ((button
+                            [ onMouseDown <| PlayerInputs ( playerNum, SoftDrop )
+                            , onMouseUp <| PlayerInputs ( playerNum, StopSoftDrop )
+                            ]
+                            [ text "fast" ]
+                         )
+                            :: makeButtons
+                                [ HardDrop ]
+                                [ "drop" ]
+                        )
                    ]
 
 
@@ -435,6 +505,9 @@ update input ({ boards, frame } as m) =
     let
         newModel =
             case input of
+                Resize windowSize ->
+                    { m | windowSize = windowSize }
+
                 -- add a tetromino given a random name
                 -- let player see the next tetromino
                 -- if no next, add next
@@ -448,7 +521,7 @@ update input ({ boards, frame } as m) =
                         { m
                             | times = ( tNew, Tuple.first m.times )
                             , frame = frame + 1
-                            , boards = List.map (updateScore frame << dropTetromino frame) boards
+                            , boards = List.map (updateScore frame << updateGhost << dropTetromino frame) boards
                         }
                     else
                         m
@@ -526,6 +599,30 @@ addTetromino newNext board =
                         board
                     else
                         add newTetrName
+
+
+finalPosition : Grid -> Tetromino -> Tetromino
+finalPosition grid ({ shape, pos } as tetr) =
+    -- scan from current row downward until the shape collides
+    let
+        go row =
+            if row > boardHeight then
+                0
+            else if checkCollision grid { tetr | pos = { x = pos.x, y = row } } then
+                row
+            else
+                go (row + 1)
+    in
+        { tetr | pos = { pos | y = go pos.y - 1 } }
+
+
+updateGhost : Board -> Board
+updateGhost board =
+    let
+        newGhost =
+            unwrapMaybeWith Nothing (\tetr -> Just <| finalPosition board.grid tetr) board.tetromino
+    in
+        { board | ghost = newGhost }
 
 
 checkCollision : Grid -> Tetromino -> Bool
@@ -645,42 +742,40 @@ addScore frame ({ clearedRows, tetris } as board) =
         }
 
 
-stopSoftDrop frame board =
-    -- only soft drop for a single frame
-    if frame > Tuple.first board.speed then
-        { board | speed = ( 0, Normal ) }
-    else
-        board
-
-
 dropTetromino : Int -> Board -> Board
 dropTetromino frame board =
-    stopSoftDrop frame <|
-        if Tuple.second board.speed == Normal && frame % normalSpeed /= 0 then
-            board
-        else
-            case board.tetromino of
-                Just ({ shape, pos } as oldTetromino) ->
-                    let
-                        collision =
-                            checkCollision board.grid newTetromino
+    if board.speed == Normal && frame % normalSpeed /= 0 then
+        board
+    else
+        case board.tetromino of
+            Just ({ shape, pos } as oldTetromino) ->
+                let
+                    collision =
+                        checkCollision board.grid newTetromino
 
-                        newTetromino =
-                            { oldTetromino
-                                | pos = { pos | y = pos.y + 1 }
-                            }
-                    in
-                        if collision then
-                            merge frame oldTetromino { board | tetromino = Nothing }
-                        else
-                            { board | tetromino = Just newTetromino }
+                    newTetromino =
+                        { oldTetromino
+                            | pos = { pos | y = pos.y + 1 }
+                        }
+                in
+                    if collision then
+                        merge frame oldTetromino { board | tetromino = Nothing }
+                    else
+                        { board | tetromino = Just newTetromino }
 
-                _ ->
-                    board
+            _ ->
+                board
 
 
 hardDrop board =
-    board
+    unwrapMaybeWith board
+        (\tetr ->
+            { board
+                | ghost = Nothing
+                , tetromino = Just <| finalPosition board.grid tetr
+            }
+        )
+        board.tetromino
 
 
 processInput frame playerInputs board =
@@ -689,7 +784,10 @@ processInput frame playerInputs board =
             hardDrop board
 
         SoftDrop ->
-            { board | speed = ( frame, Fast ) }
+            { board | speed = Fast }
+
+        StopSoftDrop ->
+            { board | speed = Normal }
 
         Rotate d ->
             let
