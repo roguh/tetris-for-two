@@ -16,6 +16,15 @@ main h2, main h3 {
     background-color: grey !important;
 }
 
+.info > div { 
+    display: inline-block;
+}
+
+.held .cell {
+    width: 0.5em;
+    height: 0.5em;
+}
+
 .board {
     transition: background-color 0.5s ease;
     text-align: center;

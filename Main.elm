@@ -1,8 +1,8 @@
--- TODO add new input: instanttranslation
 -- TODO fix cleared animation (fancier transitions)
--- TODO write info: reload, keyboard controls, touch controls, about
--- TODO take screenshots
 -- TODO make tetrominos look prettier (gradients, ghostier ghost piece)
+-- docs:
+-- TODO instructions, with nice keyboard picture; write about page reloading
+-- TODO take screenshots
 -- speed:
 -- TODO have less code (half the number of code lines?)
 -- config:
@@ -16,7 +16,7 @@
 -- 3 TODO better rewards for combos (timer)
 -- TODO better reward for special moves (T flips)
 -- tetromino generation:
--- 1 TODO hold piece (click button or use key)
+-- TODO replace holdTimer with drop detector, do not allow another hold until a merge
 -- 1 TODO show next 3 pieces
 -- 1 TODO generate random tetrominos using 7system (bags of 7)
 -- controls:
@@ -95,6 +95,15 @@ main =
         }
 
 
+isNothing x =
+    case x of
+        Nothing ->
+            True
+
+        _ ->
+            False
+
+
 unwrapMaybeWith default f v =
     {- Convert `v = Just a` to `f a`
        Convert `v = Nothing` to `default`
@@ -139,16 +148,38 @@ type DropSpeed
     | Normal
 
 
+tetrisBonusName =
+    "tetris"
+
+
+clearedBonusName =
+    "cleared board"
+
+
+rowClearedBonusName =
+    "row cleared"
+
+
+bonuses =
+    [ rowClearedBonusName, tetrisBonusName, clearedBonusName ]
+
+
+type alias BonusName =
+    String
+
+
 type alias Board =
     { score : Int
     , gameOver : Bool
     , clearedRows : List Int
-    , tetris : Maybe Time
+    , bonuses : Dict BonusName Time -- bonus name, when was the last time this bonus was achieved?
     , speed : DropSpeed
     , grid : Grid
     , translate : Maybe Dir
     , ghost : Maybe Tetromino
     , tetromino : Maybe Tetromino -- should replace with a list of tetrominos
+    , held : Maybe ShapeName
+    , holdTimer : Time
     , nextTetromino : Maybe ShapeName
     }
 
@@ -169,6 +200,7 @@ type PlayerInput
     | SoftDrop
     | StopSoftDrop
     | HardDrop
+    | Hold
 
 
 type alias BoardID =
@@ -187,7 +219,7 @@ type Input
 boardHeight =
     -- TODO make height configurable
     -- note top 2 rows must be hidden
-    22 + boardMargin * 2
+    30 + boardMargin * 2
 
 
 boardWidth =
@@ -200,7 +232,7 @@ boardMargin =
 
 numPlayers =
     -- TODO make this configurable
-    2
+    1
 
 
 init nPlayers =
@@ -232,7 +264,7 @@ initBoards nPlayers =
         { score = 0
         , clearedRows = []
         , gameOver = False
-        , tetris = Nothing
+        , bonuses = Dict.empty
         , speed = Normal
         , grid =
             initialize boardHeight
@@ -246,6 +278,8 @@ initBoards nPlayers =
         , translate = Nothing
         , ghost = Nothing
         , tetromino = Nothing
+        , held = Nothing
+        , holdTimer = holdLimit * 2
         , nextTetromino = Nothing
         }
 
@@ -302,11 +336,11 @@ subscriptions model =
 
 
 keyboardHandler array key =
-    List.foldr
+    List.foldl
         (\( orderedControls, act ) action ->
             if action == None then
                 Tuple.first <|
-                    List.foldr
+                    List.foldl
                         (\control ( prev, playerNum ) ->
                             if key == control then
                                 ( PlayerInputs playerNum act
@@ -347,28 +381,32 @@ downControls key =
     else
         keyboardHandler
             [ ( [ 37, 65 ]
-              , -- left arrow
+              , -- left arrow, W
                 Translate Left
               )
             , ( [ 39, 68 ]
-              , -- right arrow
+              , -- right arrow, D
                 Translate Right
               )
             , ( [ 190, 88 ]
-              , -- period
+              , -- period, X
                 Rotate Right
               )
             , ( [ 188, 90 ]
-              , -- comma
+              , -- comma, Z
                 Rotate Left
               )
             , ( [ 40, 83 ]
-              , -- down arrow
+              , -- down arrow, S
                 SoftDrop
               )
             , ( [ 38, 87 ]
-              , -- up arrow
+              , -- up arrow, W
                 HardDrop
+              )
+            , ( [ 76, 84 ]
+                -- L, T
+              , Hold
               )
             ]
             key
@@ -406,8 +444,36 @@ view model =
         ]
 
 
+cellToAttrs cell =
+    "cell"
+        :: case cell of
+            Empty ->
+                [ "empty" ]
+
+            Edge ->
+                [ "edge" ]
+
+            Full f ->
+                [ "tetromino", "tetromino" ++ f ]
+
+
 viewBoard minSize playerNum board =
     let
+        drawTetromino i =
+            case i of
+                Nothing ->
+                    []
+
+                Just name ->
+                    case makeTetromino name 0 of
+                        Just tetrs ->
+                            Array.toList <|
+                                Array.map (div [] << Array.toList)
+                                    (Array2D.map (\cell -> div (List.map class <| cellToAttrs cell) []) tetrs.shape).data
+
+                        Nothing ->
+                            []
+
         grid =
             -- deleteEdges <|
             Array2D.indexedMap
@@ -453,20 +519,16 @@ viewBoard minSize playerNum board =
 
                         attrs =
                             List.map class <|
-                                if row < 2 then
+                                (if row < 2 then
                                     [ "topMargin" ]
-                                else if cell == Edge then
-                                    [ "edge" ]
-                                else if isFull then
-                                    [ "tetromino", "tetromino" ++ (Maybe.withDefault "" cellName) ]
-                                else if isGhost then
-                                    [ "ghost" ]
-                                else if cell == Empty then
-                                    [ "empty" ]
-                                else
-                                    []
+                                 else if isGhost then
+                                    [ "ghost", unwrapMaybeWith "" (\t -> "tetromino" ++ t.name) board.ghost ]
+                                 else
+                                    cellToAttrs cell
+                                )
+                                    ++ cellToAttrs cell
                     in
-                        div ((class "cell") :: attrs) []
+                        div attrs []
                 )
                 board.grid
 
@@ -482,12 +544,20 @@ viewBoard minSize playerNum board =
                 [ text <|
                     "Player "
                         ++ (toString <| 1 + playerNum)
-                        ++ if unwrapMaybeWith False (\t -> True) board.tetris then
-                            ": TETRIS!"
-                           else
-                            ""
+                        ++ (List.foldl (++) "" <| Dict.keys board.bonuses)
                 ]
             , h3 [] [ text <| "Score " ++ toString board.score ]
+            , div [ class "info" ] <|
+                [ div [] [ text "Next:" ]
+                , div [ class "grid", class "next" ] <| drawTetromino board.nextTetromino
+                ]
+                    ++ (if isNothing board.held then
+                            []
+                        else
+                            [ div [] [ text "Holding: " ]
+                            , div [ class "grid", class "held" ] <| drawTetromino board.held
+                            ]
+                       )
             , div
                 [ class "grid"
                 , style [ ( "font-size", (toString <| minSize // boardHeight // 2) ++ "px" ) ]
@@ -546,7 +616,7 @@ update input ({ boards } as m) =
                             { m
                                 | dt = newdt
                                 , tPrev = Just tNew
-                                , boards = List.map (updateScore tNew << updateGhost << dropTetromino newdt << translateTetromino newdt) boards
+                                , boards = List.map ((\b -> { b | holdTimer = b.holdTimer + Time.inSeconds newdt }) << updateScore tNew << updateGhost << dropTetromino newdt << translateTetromino newdt << (\b -> { b | clearedRows = [] })) boards
                             }
                     else
                         m
@@ -560,7 +630,7 @@ update input ({ boards } as m) =
                             List.indexedMap
                                 (\playerNum board ->
                                     if playerNum == n then
-                                        processInput ps board
+                                        processInput m.dt ps board
                                     else
                                         board
                                 )
@@ -583,17 +653,15 @@ update input ({ boards } as m) =
         )
 
 
-tetrisCounter =
+bonusCounter =
     -- show "Tetris!" for 5 seconds
     5
 
 
 updateScore t board =
     addScore t <|
-        if unwrapMaybeWith False (\tetrisTime -> Time.inSeconds (t - tetrisTime) > tetrisCounter) board.tetris then
-            { board | tetris = Nothing }
-        else
-            board
+        -- remove bonuses that have been around for more than bonusCounter seconds
+        { board | bonuses = Dict.filter (\_ time -> Time.inSeconds time + bonusCounter > Time.inSeconds t) board.bonuses }
 
 
 addTetromino newNext board =
@@ -758,7 +826,7 @@ clearRows ({ grid } as board) =
         go 0 { board | clearedRows = [] }
 
 
-addScore t ({ clearedRows, tetris } as board) =
+addScore t ({ clearedRows, bonuses } as board) =
     let
         gotTetris =
             List.length clearedRows >= 4
@@ -767,15 +835,22 @@ addScore t ({ clearedRows, tetris } as board) =
             | score =
                 board.score
                     + (if gotTetris then
-                        8
+                        4
                        else
-                        List.length clearedRows
+                        1
                       )
-            , tetris =
-                if gotTetris then
-                    Just t
-                else
-                    tetris
+                    * List.length clearedRows
+            , bonuses =
+                (if List.length clearedRows > 0 then
+                    Dict.insert rowClearedBonusName t
+                 else
+                    \t -> t
+                )
+                <|
+                    if gotTetris then
+                        Dict.insert tetrisBonusName t bonuses
+                    else
+                        bonuses
         }
 
 
@@ -819,12 +894,29 @@ tetrominoSpeed speed dt =
             case speed of
                 Fast ->
                     -- a tetromino should travel 10 blocks in 1 second
-                    12
+                    vertFastSpeed
 
                 Normal ->
-                    3
+                    vertSpeed
     in
         (Time.inSeconds dt) * tSpeed
+
+
+vertSpeed =
+    3
+
+
+vertFastSpeed =
+    12
+
+
+horizSpeed =
+    toFloat boardWidth
+
+
+holdLimit =
+    -- TODO change this mechanism
+    5
 
 
 dropTetromino : Float -> Board -> Board
@@ -860,7 +952,7 @@ hardDrop board =
         board.tetromino
 
 
-processInput playerInputs board =
+processInput dt playerInputs board =
     case playerInputs of
         HardDrop ->
             hardDrop board
@@ -891,6 +983,24 @@ processInput playerInputs board =
                         board.tetromino
             in
                 tryToAdd newTetromino board
+
+        Hold ->
+            if board.holdTimer < holdLimit then
+                board
+            else
+                let
+                    b =
+                        case board.tetromino of
+                            Nothing ->
+                                board
+
+                            Just tetr ->
+                                { board
+                                    | held = Just tetr.name
+                                    , tetromino = unwrapMaybeWith Nothing (\h -> makeTetromino h 0) board.held
+                                }
+                in
+                    { b | holdTimer = 0 }
 
         StopTranslate ->
             { board | translate = Nothing }
