@@ -5,9 +5,6 @@
 -- TODO make tetrominos look prettier (gradients, ghostier ghost piece)
 -- speed:
 -- TODO have less code (half the number of code lines?)
--- TODO use elm-lang/animation-frame to get a good Tick
--- TODO do not use Task module
--- TODO remove unneeded modules
 -- config:
 -- read from inputs when in gamestart or gameover
 -- 3 TODO init config: adjust player count
@@ -23,7 +20,6 @@
 -- 1 TODO show next 3 pieces
 -- 1 TODO generate random tetrominos using 7system (bags of 7)
 -- controls:
--- 2 TODO use elm-lang/keyboard instead of onKey on <main>
 -- 2 TODO BIG EASY TO USE TOUCH CONTROLS (swipe horizontally, swipe up, swipe down, tap)
 -- use mpizenberg/elm-touch-events
 -- competition
@@ -79,25 +75,15 @@ module Main exposing (main)
 
 import Window exposing (Size)
 import Html exposing (Html, Attribute, Attribute, main_, button, div, text, h3, h2, span)
-import
-    -- TODO replace with keyboard and touch libraries
-    Html.Events
-        exposing (on, keyCode, onMouseDown, onMouseUp)
 import Html.Attributes exposing (attribute, class, id, style)
-import
-    -- TODO replace with Keyboard
-    Dom
-        exposing (focus)
-import Task
 import Time exposing (Time, second)
 import Array
 import Random.Pcg
 import Dict exposing (Dict)
 import Array2D exposing (Array2D, initialize)
-import
-    -- TODO replace
-    Json.Decode
-        as Json
+import Task
+import Keyboard
+import AnimationFrame
 
 
 main =
@@ -136,7 +122,7 @@ type alias Grid =
 
 
 type alias Pos =
-    { x : Int, y : Int }
+    { x : Float, y : Float }
 
 
 type alias ShapeName =
@@ -153,15 +139,11 @@ type DropSpeed
     | Normal
 
 
-type alias FrameNumber =
-    Int
-
-
 type alias Board =
     { score : Int
     , gameOver : Bool
     , clearedRows : List Int
-    , tetris : Maybe FrameNumber
+    , tetris : Maybe Time
     , speed : DropSpeed
     , grid : Grid
     , translate : Maybe Dir
@@ -172,7 +154,7 @@ type alias Board =
 
 
 type alias Model =
-    { windowSize : Size, times : ( Time, Time ), frame : FrameNumber, paused : Bool, boards : List Board }
+    { windowSize : Size, dt : Time, tPrev : Maybe Time, paused : Bool, boards : List Board }
 
 
 type Dir
@@ -221,29 +203,15 @@ numPlayers =
     2
 
 
-fps =
-    12
-
-
-normalSpeed =
-    -- soft drops move `normalSpeed` times faster than normal speed
-    fps // 2
-
-
 init nPlayers =
     let
         boards =
             initBoards nPlayers
     in
-        ( { windowSize = { width = 200, height = 200 }, times = ( 0, 1 ), frame = 0, paused = False, boards = boards }
+        ( { windowSize = { width = 200, height = 200 }, dt = 0.1, tPrev = Nothing, paused = False, boards = boards }
         , Cmd.batch <|
-            [ -- give the board the browser's focus
-              -- ignore errors from Dom.focus
-              -- TODO try to do this without the Task module
-              Task.attempt (\_ -> None) <| Dom.focus "tetris"
-
-            -- generate enough tetrominos for all players
-            , randTetrominos boards
+            [ -- generate enough tetrominos for all players
+              randTetrominos boards
             , randTetrominos boards
             , Task.attempt
                 (\res ->
@@ -314,8 +282,8 @@ makeTetromino name degrees =
                 , degrees = degrees
                 , shape = shape
                 , pos =
-                    { x = boardWidth // 2 - (Array2D.columns shape // 2) -- TODO must conform to standard
-                    , y = boardMargin
+                    { x = toFloat <| boardWidth // 2 - (Array2D.columns shape // 2) -- TODO must conform to standard
+                    , y = toFloat <| boardMargin
                     }
                 }
         )
@@ -326,47 +294,38 @@ makeTetromino name degrees =
 subscriptions : Model -> Sub Input
 subscriptions model =
     Sub.batch
-        [ Time.every (second / fps) Tick
+        [ AnimationFrame.times Tick
         , Window.resizes Resize
+        , Keyboard.downs downControls
+        , Keyboard.ups upControls
         ]
 
 
-onKeyUp : (Int -> Input) -> Attribute Input
-onKeyUp tagger =
-    on "keyup" (Json.map tagger keyCode)
-
-
-onKeyDown : (Int -> Input) -> Attribute Input
-onKeyDown tagger =
-    on "keydown" (Json.map tagger keyCode)
-
-
-toTagger cs key =
-    let
-        -- convert [ ( [a, b], c ) ]
-        -- to [ (a, (0, c)), (b, (1, c)) ]
-        process =
-            Dict.fromList
-                << List.foldr
-                    (\( orderedControls, c ) controlDict ->
-                        (List.indexedMap
-                            (\playerNum control ->
-                                ( control, ( playerNum, c ) )
-                            )
-                            orderedControls
+keyboardHandler array key =
+    List.foldr
+        (\( orderedControls, act ) action ->
+            if action == None then
+                Tuple.first <|
+                    List.foldr
+                        (\control ( prev, playerNum ) ->
+                            if key == control then
+                                ( PlayerInputs playerNum act
+                                , playerNum
+                                )
+                            else
+                                ( prev, playerNum + 1 )
                         )
-                            ++ controlDict
-                    )
-                    []
-
-        controls =
-            process cs
-    in
-        unwrapMaybeWith None (\( n, c ) -> PlayerInputs n c) (Dict.get key controls)
+                        ( None, 0 )
+                        orderedControls
+            else
+                action
+        )
+        None
+        array
 
 
 upControls =
-    toTagger
+    keyboardHandler
         [ ( [ 40, 83 ]
           , -- down arrow
             StopSoftDrop
@@ -386,7 +345,7 @@ downControls key =
     if key == 80 then
         Pause
     else
-        toTagger
+        keyboardHandler
             [ ( [ 37, 65 ]
               , -- left arrow
                 Translate Left
@@ -432,17 +391,10 @@ view model =
                  else
                     ""
                 )
-            , onKeyUp upControls
-            , onKeyDown downControls
             ]
           <|
             [ div []
-                [ let
-                    ( new, old ) =
-                        model.times
-                  in
-                    text <| "FPS: " ++ toString (round <| 1 / (Time.inSeconds (new - old)))
-                ]
+                [ text <| "FPS: " ++ toString (round <| 1 / (Time.inSeconds model.dt)) ]
             , div [ class "messages" ]
                 [ if model.paused then
                     text "Paused!"
@@ -477,7 +429,7 @@ viewBoard minSize playerNum board =
                                 (\tetr ->
                                     -- if a tetromino exists
                                     -- and it is located at this position, then draw it
-                                    case Array2D.get (row - tetr.pos.y) (col - tetr.pos.x) tetr.shape of
+                                    case Array2D.get (row - pos2int tetr.pos.y) (col - pos2int tetr.pos.x) tetr.shape of
                                         -- either there's a Full piece at this location
                                         Just (Full shapeName) ->
                                             Just shapeName
@@ -490,7 +442,7 @@ viewBoard minSize playerNum board =
                         isGhost =
                             unwrapMaybeWith False
                                 (\ghost ->
-                                    case Array2D.get (row - ghost.pos.y) (col - ghost.pos.x) ghost.shape of
+                                    case Array2D.get (row - pos2int ghost.pos.y) (col - pos2int ghost.pos.x) ghost.shape of
                                         Just (Full _) ->
                                             True
 
@@ -554,20 +506,23 @@ viewBoard minSize playerNum board =
                                 Array.toList row
                         )
                         grid.data
-            , div []
-                [ button [ onMouseDown (pi <| Translate Left), onMouseUp (pi StopTranslate) ] [ text "<" ]
-                , button [ onMouseDown (pi <| Translate Right), onMouseUp (pi StopTranslate) ] [ text ">" ]
-                , button [ onMouseDown (pi <| Rotate Left) ] [ text "r" ]
-                ]
-            , div []
-                [ button [ onMouseDown (pi SoftDrop), onMouseUp (pi StopSoftDrop) ] [ text "v" ]
-                , button [ onMouseDown (pi HardDrop) ] [ text "V" ]
-                ]
+
+            {-
+               , div []
+                   [ button [ onMouseDown (pi <| Translate Left), onMouseUp (pi StopTranslate) ] [ text "<" ]
+                   , button [ onMouseDown (pi <| Translate Right), onMouseUp (pi StopTranslate) ] [ text ">" ]
+                   , button [ onMouseDown (pi <| Rotate Left) ] [ text "r" ]
+                   ]
+               , div []
+                   [ button [ onMouseDown (pi SoftDrop), onMouseUp (pi StopSoftDrop) ] [ text "v" ]
+                   , button [ onMouseDown (pi HardDrop) ] [ text "V" ]
+                   ]
+            -}
             ]
 
 
 update : Input -> Model -> ( Model, Cmd Input )
-update input ({ boards, frame } as m) =
+update input ({ boards } as m) =
     let
         newModel =
             case input of
@@ -584,11 +539,15 @@ update input ({ boards, frame } as m) =
 
                 Tick tNew ->
                     if not m.paused then
-                        { m
-                            | times = ( tNew, Tuple.first m.times )
-                            , frame = frame + 1
-                            , boards = List.map (updateScore frame << updateGhost << dropTetromino frame << translateTetromino) boards
-                        }
+                        let
+                            newdt =
+                                unwrapMaybeWith 0.01 (\tPrev -> tNew - tPrev) m.tPrev
+                        in
+                            { m
+                                | dt = newdt
+                                , tPrev = Just tNew
+                                , boards = List.map (updateScore tNew << updateGhost << dropTetromino newdt << translateTetromino newdt) boards
+                            }
                     else
                         m
 
@@ -601,7 +560,7 @@ update input ({ boards, frame } as m) =
                             List.indexedMap
                                 (\playerNum board ->
                                     if playerNum == n then
-                                        processInput frame ps board
+                                        processInput ps board
                                     else
                                         board
                                 )
@@ -629,11 +588,12 @@ tetrisCounter =
     5
 
 
-updateScore frame board =
-    if unwrapMaybeWith False (\t -> frame - t > tetrisCounter * fps) board.tetris then
-        { board | tetris = Nothing }
-    else
-        board
+updateScore t board =
+    addScore t <|
+        if unwrapMaybeWith False (\tetrisTime -> Time.inSeconds (t - tetrisTime) > tetrisCounter) board.tetris then
+            { board | tetris = Nothing }
+        else
+            board
 
 
 addTetromino newNext board =
@@ -691,6 +651,10 @@ updateGhost board =
         { board | ghost = newGhost }
 
 
+pos2int =
+    truncate
+
+
 checkCollision : Grid -> Tetromino -> Bool
 checkCollision grid { shape, pos } =
     let
@@ -700,7 +664,7 @@ checkCollision grid { shape, pos } =
                 (\row col c ->
                     (c /= Empty)
                         && ((Maybe.withDefault Empty <|
-                                Array2D.get (row + pos.y) (col + pos.x) grid
+                                Array2D.get (row + pos2int pos.y) (col + pos2int pos.x) grid
                             )
                                 /= Empty
                            )
@@ -711,38 +675,45 @@ checkCollision grid { shape, pos } =
         Array.foldl (||) False <| Array.map (Array.foldl (||) False) mask.data
 
 
-merge frame { shape, pos } ({ grid } as board) =
-    clearRows frame
+merge { shape, pos } ({ grid } as board) =
+    clearRows
         { board
             | grid =
                 Array2D.indexedMap
                     -- merge shape with grid
                     (\row col gridCell ->
-                        if
-                            -- check if this is an area of interest
-                            not <|
-                                (row >= pos.y && row < pos.y + Array2D.rows shape)
-                                    && (col >= pos.x && col < pos.x + Array2D.columns shape)
-                        then
-                            gridCell
-                        else
-                            -- add any full blocks in the part to the grid
-                            unwrapMaybeWith Empty
-                                (\shapeCell ->
-                                    if shapeCell == Empty then
-                                        gridCell
-                                    else
-                                        shapeCell
-                                )
-                                -- get the part
-                                (Array2D.get (row - pos.y) (col - pos.x) shape)
+                        let
+                            x =
+                                pos2int pos.x
+
+                            y =
+                                pos2int pos.y
+                        in
+                            if
+                                -- check if this is an area of interest
+                                not <|
+                                    (row >= y && row < y + Array2D.rows shape)
+                                        && (col >= x && col < x + Array2D.columns shape)
+                            then
+                                gridCell
+                            else
+                                -- add any full blocks in the part to the grid
+                                unwrapMaybeWith Empty
+                                    (\shapeCell ->
+                                        if shapeCell == Empty then
+                                            gridCell
+                                        else
+                                            shapeCell
+                                    )
+                                    -- get the part
+                                    (Array2D.get (row - y) (col - x) shape)
                     )
                     grid
         }
 
 
-clearRows : Int -> Board -> Board
-clearRows frame ({ grid } as board) =
+clearRows : Board -> Board
+clearRows ({ grid } as board) =
     -- check each row, starting with row 0
     -- if row is all non-empty
     -- then delete it
@@ -784,10 +755,10 @@ clearRows frame ({ grid } as board) =
                         Nothing ->
                             b
     in
-        addScore frame <| go 0 { board | clearedRows = [] }
+        go 0 { board | clearedRows = [] }
 
 
-addScore frame ({ clearedRows, tetris } as board) =
+addScore t ({ clearedRows, tetris } as board) =
     let
         gotTetris =
             List.length clearedRows >= 4
@@ -802,14 +773,14 @@ addScore frame ({ clearedRows, tetris } as board) =
                       )
             , tetris =
                 if gotTetris then
-                    Just frame
+                    Just t
                 else
                     tetris
         }
 
 
-translateTetromino : Board -> Board
-translateTetromino board =
+translateTetromino : Time -> Board -> Board
+translateTetromino dt board =
     case board.translate of
         Nothing ->
             board
@@ -825,9 +796,9 @@ translateTetromino board =
                                         { pos
                                             | x =
                                                 (if d == Left then
-                                                    pos.x - 1
+                                                    pos.x - tetrominoHorizSpeed dt
                                                  else
-                                                    pos.x + 1
+                                                    pos.x + tetrominoHorizSpeed dt
                                                 )
                                         }
                                 }
@@ -837,29 +808,45 @@ translateTetromino board =
                 tryToAdd newTetromino board
 
 
-dropTetromino : Int -> Board -> Board
-dropTetromino frame board =
-    if board.speed == Normal && frame % normalSpeed /= 0 then
-        board
-    else
-        case board.tetromino of
-            Just ({ shape, pos } as oldTetromino) ->
-                let
-                    collision =
-                        checkCollision board.grid newTetromino
+tetrominoHorizSpeed dt =
+    -- a tetromino can horizontally travel the board in 1 second
+    (Time.inSeconds dt) * (toFloat boardWidth)
 
-                    newTetromino =
-                        { oldTetromino
-                            | pos = { pos | y = pos.y + 1 }
-                        }
-                in
-                    if collision then
-                        merge frame oldTetromino { board | tetromino = Nothing }
-                    else
-                        { board | tetromino = Just newTetromino }
 
-            _ ->
-                board
+tetrominoSpeed speed dt =
+    let
+        tSpeed =
+            case speed of
+                Fast ->
+                    -- a tetromino should travel 10 blocks in 1 second
+                    12
+
+                Normal ->
+                    3
+    in
+        (Time.inSeconds dt) * tSpeed
+
+
+dropTetromino : Float -> Board -> Board
+dropTetromino dt board =
+    case board.tetromino of
+        Just ({ shape, pos } as oldTetromino) ->
+            let
+                collision =
+                    checkCollision board.grid newTetromino
+
+                newTetromino =
+                    { oldTetromino
+                        | pos = { pos | y = pos.y + tetrominoSpeed board.speed dt }
+                    }
+            in
+                if collision then
+                    merge oldTetromino { board | tetromino = Nothing }
+                else
+                    { board | tetromino = Just newTetromino }
+
+        _ ->
+            board
 
 
 hardDrop board =
@@ -873,7 +860,7 @@ hardDrop board =
         board.tetromino
 
 
-processInput frame playerInputs board =
+processInput playerInputs board =
     case playerInputs of
         HardDrop ->
             hardDrop board
