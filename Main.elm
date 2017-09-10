@@ -1,37 +1,103 @@
--- TODO init config: adjust player count
--- TODO init config: adjust teams
--- TODO init config: adjust field height
--- TODO detect GAME OVER
--- TODO detect START GAME
--- TODO ghost piece using css3 animations
--- TODO hold piece
--- TODO show next 3 pieces
--- TODO better rewards for combos (timer)
+-- TODO add new input: instanttranslation
+-- TODO fix cleared animation (fancier transitions)
+-- TODO write info: reload, keyboard controls, touch controls, about
+-- TODO take screenshots
+-- TODO make tetrominos look prettier (gradients, ghostier ghost piece)
+-- speed:
+-- TODO have less code (half the number of code lines?)
+-- TODO use elm-lang/animation-frame to get a good Tick
+-- TODO do not use Task module
+-- TODO remove unneeded modules
+-- config:
+-- read from inputs when in gamestart or gameover
+-- 3 TODO init config: adjust player count
+-- 3 TODO init config: adjust teams
+-- 3 TODO init config: adjust field height
+-- scoring:
+-- 3 TODO detect GAME OVER (offer to restart)
+-- 3 TODO detect START GAME
+-- 3 TODO better rewards for combos (timer)
 -- TODO better reward for special moves (T flips)
--- TODO generate random tetrominos using 7system (bags of 7)
--- TODO speed up pieces as free space shrinks
--- TODO improve buttons (how to detect HTML button hold?)
--- TODO use gamepads as controllers
--- TODO hard drop (find maximum y, then translate by that much)
--- TODO CSS3 animations
--- TODO good tetris AI
--- TODO use images or board+background spans instead of unicode-art
+-- tetromino generation:
+-- 1 TODO hold piece (click button or use key)
+-- 1 TODO show next 3 pieces
+-- 1 TODO generate random tetrominos using 7system (bags of 7)
+-- controls:
+-- 2 TODO use elm-lang/keyboard instead of onKey on <main>
+-- 2 TODO BIG EASY TO USE TOUCH CONTROLS (swipe horizontally, swipe up, swipe down, tap)
+-- use mpizenberg/elm-touch-events
+-- competition
+-- TODO different number of team members on each team (single player, two player coop or compete)
+-- TODO if competing, add nuisance row to all opponents when a tetris is hit
+{-
+   special move: combos
+
+   2 or more tetris in a row (less than X seconds)
+-}
+{-
+   special move: 4-wide
+
+   4 wide gap, start clearing it quickly
+
+   XX    XX
+   XX    XX
+   XX    XX
+   XX    XX
+   XX    XX
+   XX    XX
+   XX    XX
+   XX    XX
+
+
+-}
+{-
+   special move: T-spin
+
+
+   from here:
+
+    -
+   --X
+    -
+   X X
+
+   to here:
+
+     X
+   ---
+   X-X
+
+   on rotate with tap: if failed try the other direction
+
+   must clear rows! (max 2)
+
+   clear all (after > 4)
+-}
 
 
 module Main exposing (main)
 
 import Window exposing (Size)
 import Html exposing (Html, Attribute, Attribute, main_, button, div, text, h3, h2, span)
-import Html.Events exposing (on, keyCode, onMouseDown, onMouseUp)
+import
+    -- TODO replace with keyboard and touch libraries
+    Html.Events
+        exposing (on, keyCode, onMouseDown, onMouseUp)
 import Html.Attributes exposing (attribute, class, id, style)
-import Dom exposing (focus)
+import
+    -- TODO replace with Keyboard
+    Dom
+        exposing (focus)
 import Task
 import Time exposing (Time, second)
 import Array
 import Random.Pcg
 import Dict exposing (Dict)
 import Array2D exposing (Array2D, initialize)
-import Json.Decode as Json
+import
+    -- TODO replace
+    Json.Decode
+        as Json
 
 
 main =
@@ -98,6 +164,7 @@ type alias Board =
     , tetris : Maybe FrameNumber
     , speed : DropSpeed
     , grid : Grid
+    , translate : Maybe Dir
     , ghost : Maybe Tetromino
     , tetromino : Maybe Tetromino -- should replace with a list of tetrominos
     , nextTetromino : Maybe ShapeName
@@ -115,6 +182,7 @@ type Dir
 
 type PlayerInput
     = Translate Dir
+    | StopTranslate
     | Rotate Dir
     | SoftDrop
     | StopSoftDrop
@@ -126,7 +194,7 @@ type alias BoardID =
 
 
 type Input
-    = PlayerInputs ( BoardID, PlayerInput )
+    = PlayerInputs BoardID PlayerInput
     | Tick Time
     | Resize Size
     | Pause
@@ -154,12 +222,12 @@ numPlayers =
 
 
 fps =
-    24
+    12
 
 
 normalSpeed =
     -- soft drops move `normalSpeed` times faster than normal speed
-    fps // 4
+    fps // 2
 
 
 init nPlayers =
@@ -171,6 +239,7 @@ init nPlayers =
         , Cmd.batch <|
             [ -- give the board the browser's focus
               -- ignore errors from Dom.focus
+              -- TODO try to do this without the Task module
               Task.attempt (\_ -> None) <| Dom.focus "tetris"
 
             -- generate enough tetrominos for all players
@@ -206,6 +275,7 @@ initBoards nPlayers =
                     else
                         Empty
                 )
+        , translate = Nothing
         , ghost = Nothing
         , tetromino = Nothing
         , nextTetromino = Nothing
@@ -292,7 +362,7 @@ toTagger cs key =
         controls =
             process cs
     in
-        unwrapMaybeWith None PlayerInputs (Dict.get key controls)
+        unwrapMaybeWith None (\( n, c ) -> PlayerInputs n c) (Dict.get key controls)
 
 
 upControls =
@@ -300,6 +370,14 @@ upControls =
         [ ( [ 40, 83 ]
           , -- down arrow
             StopSoftDrop
+          )
+        , ( [ 37, 65 ]
+          , -- left arrow
+            StopTranslate
+          )
+        , ( [ 39, 68 ]
+          , -- right arrow
+            StopTranslate
           )
         ]
 
@@ -440,13 +518,8 @@ viewBoard minSize playerNum board =
                 )
                 board.grid
 
-        makeButtons =
-            List.map2
-                (\action buttonText ->
-                    button
-                        [ onMouseDown <| PlayerInputs ( playerNum, action ) ]
-                        [ text buttonText ]
-                )
+        pi =
+            PlayerInputs playerNum
     in
         div
             [ id <| "team" ++ toString (1 + playerNum % 2)
@@ -463,41 +536,34 @@ viewBoard minSize playerNum board =
                             ""
                 ]
             , h3 [] [ text <| "Score " ++ toString board.score ]
-            ]
-                ++ [ div
-                        [ class "grid"
-                        , style [ ( "font-size", (toString <| minSize // boardHeight // 2) ++ "px" ) ]
-                        ]
-                     <|
-                        Array.toList <|
-                            Array.indexedMap
-                                (\rowIndex row ->
-                                    div
-                                        [ if List.member rowIndex board.clearedRows then
-                                            class "clearedRow"
-                                          else
-                                            class ""
-                                        ]
-                                    <|
-                                        Array.toList row
-                                )
-                                grid.data
-                   , div [] <|
-                        makeButtons
-                            [ Translate Left, Rotate Left, Rotate Right, Translate Right ]
-                            [ "↼", "⤺", "⤻", "⇀" ]
-                   , div [] <|
-                        ((button
-                            [ onMouseDown <| PlayerInputs ( playerNum, SoftDrop )
-                            , onMouseUp <| PlayerInputs ( playerNum, StopSoftDrop )
-                            ]
-                            [ text "fast" ]
-                         )
-                            :: makeButtons
-                                [ HardDrop ]
-                                [ "drop" ]
+            , div
+                [ class "grid"
+                , style [ ( "font-size", (toString <| minSize // boardHeight // 2) ++ "px" ) ]
+                ]
+              <|
+                Array.toList <|
+                    Array.indexedMap
+                        (\rowIndex row ->
+                            div
+                                [ if List.member rowIndex board.clearedRows then
+                                    class "clearedRow"
+                                  else
+                                    class ""
+                                ]
+                            <|
+                                Array.toList row
                         )
-                   ]
+                        grid.data
+            , div []
+                [ button [ onMouseDown (pi <| Translate Left), onMouseUp (pi StopTranslate) ] [ text "<" ]
+                , button [ onMouseDown (pi <| Translate Right), onMouseUp (pi StopTranslate) ] [ text ">" ]
+                , button [ onMouseDown (pi <| Rotate Left) ] [ text "r" ]
+                ]
+            , div []
+                [ button [ onMouseDown (pi SoftDrop), onMouseUp (pi StopSoftDrop) ] [ text "v" ]
+                , button [ onMouseDown (pi HardDrop) ] [ text "V" ]
+                ]
+            ]
 
 
 update : Input -> Model -> ( Model, Cmd Input )
@@ -521,7 +587,7 @@ update input ({ boards, frame } as m) =
                         { m
                             | times = ( tNew, Tuple.first m.times )
                             , frame = frame + 1
-                            , boards = List.map (updateScore frame << updateGhost << dropTetromino frame) boards
+                            , boards = List.map (updateScore frame << updateGhost << dropTetromino frame << translateTetromino) boards
                         }
                     else
                         m
@@ -529,7 +595,7 @@ update input ({ boards, frame } as m) =
                 Pause ->
                     { m | paused = not m.paused }
 
-                PlayerInputs ( n, ps ) ->
+                PlayerInputs n ps ->
                     { m
                         | boards =
                             List.indexedMap
@@ -742,6 +808,35 @@ addScore frame ({ clearedRows, tetris } as board) =
         }
 
 
+translateTetromino : Board -> Board
+translateTetromino board =
+    case board.translate of
+        Nothing ->
+            board
+
+        Just d ->
+            let
+                newTetromino =
+                    unwrapMaybeWith Nothing
+                        (\({ shape, pos } as oldTetromino) ->
+                            Just
+                                { oldTetromino
+                                    | pos =
+                                        { pos
+                                            | x =
+                                                (if d == Left then
+                                                    pos.x - 1
+                                                 else
+                                                    pos.x + 1
+                                                )
+                                        }
+                                }
+                        )
+                        board.tetromino
+            in
+                tryToAdd newTetromino board
+
+
 dropTetromino : Int -> Board -> Board
 dropTetromino frame board =
     if board.speed == Normal && frame % normalSpeed /= 0 then
@@ -810,27 +905,11 @@ processInput frame playerInputs board =
             in
                 tryToAdd newTetromino board
 
+        StopTranslate ->
+            { board | translate = Nothing }
+
         Translate d ->
-            let
-                newTetromino =
-                    unwrapMaybeWith Nothing
-                        (\({ shape, pos } as oldTetromino) ->
-                            Just
-                                { oldTetromino
-                                    | pos =
-                                        { pos
-                                            | x =
-                                                (if d == Left then
-                                                    pos.x - 1
-                                                 else
-                                                    pos.x + 1
-                                                )
-                                        }
-                                }
-                        )
-                        board.tetromino
-            in
-                tryToAdd newTetromino board
+            { board | translate = Just d }
 
 
 tryToAdd newTetromino board =
