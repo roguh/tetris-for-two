@@ -1,6 +1,8 @@
 # Tetris for two
 A fun tetris game with many different game modes.
 
+## PLAY HERE: [hucal.github.io/projects/tetris-for-two](http://hucal.github.io/projects/tetris-for-two/index.html)
+
 ## Player 1 (left) controls:
 
 Press these `BUTTONS` to move your tetromino and beat your opponent!
