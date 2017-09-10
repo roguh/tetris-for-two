@@ -232,7 +232,7 @@ boardMargin =
 
 numPlayers =
     -- TODO make this configurable
-    1
+    2
 
 
 init nPlayers =
@@ -347,9 +347,9 @@ keyboardHandler array key =
                                 , playerNum
                                 )
                             else
-                                ( prev, playerNum + 1 )
+                                ( prev, playerNum - 1 )
                         )
-                        ( None, 0 )
+                        ( None, (List.length orderedControls) - 1 )
                         orderedControls
             else
                 action
@@ -547,17 +547,6 @@ viewBoard minSize playerNum board =
                         ++ (List.foldl (++) "" <| Dict.keys board.bonuses)
                 ]
             , h3 [] [ text <| "Score " ++ toString board.score ]
-            , div [ class "info" ] <|
-                [ div [] [ text "Next:" ]
-                , div [ class "grid", class "next" ] <| drawTetromino board.nextTetromino
-                ]
-                    ++ (if isNothing board.held then
-                            []
-                        else
-                            [ div [] [ text "Holding: " ]
-                            , div [ class "grid", class "held" ] <| drawTetromino board.held
-                            ]
-                       )
             , div
                 [ class "grid"
                 , style [ ( "font-size", (toString <| minSize // boardHeight // 2) ++ "px" ) ]
@@ -576,6 +565,17 @@ viewBoard minSize playerNum board =
                                 Array.toList row
                         )
                         grid.data
+            , div [ class "info" ] <|
+                [ div [] [ text "Next:" ]
+                , div [ class "grid", class "next" ] <| drawTetromino board.nextTetromino
+                ]
+                    ++ (if isNothing board.held then
+                            []
+                        else
+                            [ div [] [ text "Holding: " ]
+                            , div [ class "grid", class "held" ] <| drawTetromino board.held
+                            ]
+                       )
 
             {-
                , div []
