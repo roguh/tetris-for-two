@@ -1,3 +1,4 @@
+-- TODO: strip empty rows from the held and next piece previews
 -- TODO fix cleared animation (fancier transitions)
 -- TODO make tetrominos look prettier (gradients, ghostier ghost piece)
 -- docs:
@@ -544,7 +545,7 @@ viewBoard minSize playerNum board =
                 [ text <|
                     "Player "
                         ++ (toString <| 1 + playerNum)
-                        ++ (List.foldl (++) "" <| Dict.keys board.bonuses)
+                        ++ (List.foldl (\s t -> s ++ " " ++ t) "" <| Dict.keys board.bonuses)
                 ]
             , h3 [] [ text <| "Score " ++ toString board.score ]
             , div
