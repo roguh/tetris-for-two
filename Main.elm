@@ -1,11 +1,10 @@
--- TODO: strip empty rows from the held and next piece previews
 -- TODO fix cleared animation (fancier transitions)
--- TODO make tetrominos look prettier (gradients, ghostier ghost piece)
 -- docs:
 -- TODO instructions, with nice keyboard picture; write about page reloading
 -- TODO take screenshots
 -- speed:
 -- TODO have less code (half the number of code lines?)
+-- TODO benchmark
 -- config:
 -- read from inputs when in gamestart or gameover
 -- 3 TODO init config: adjust player count
@@ -15,7 +14,7 @@
 -- 3 TODO detect GAME OVER (offer to restart)
 -- 3 TODO detect START GAME
 -- 3 TODO better rewards for combos (timer)
--- TODO better reward for special moves (T flips)
+-- TODO better reward for special moves (T flips, cleared board, speed combo)
 -- tetromino generation:
 -- TODO replace holdTimer with drop detector, do not allow another hold until a merge
 -- 1 TODO show next 3 pieces
@@ -23,7 +22,7 @@
 -- controls:
 -- 2 TODO BIG EASY TO USE TOUCH CONTROLS (swipe horizontally, swipe up, swipe down, tap)
 -- use mpizenberg/elm-touch-events
--- competition
+-- competition:
 -- TODO different number of team members on each team (single player, two player coop or compete)
 -- TODO if competing, add nuisance row to all opponents when a tetris is hit
 {-
@@ -157,32 +156,51 @@ clearedBonusName =
     "cleared board"
 
 
-rowClearedBonusName =
-    "row cleared"
+rowClearedBonusName n =
+    if n == 1 then
+        "row cleared"
+    else
+        (toString n) ++ " rows cleared"
 
 
 bonuses =
-    [ rowClearedBonusName, tetrisBonusName, clearedBonusName ]
+    [ tetrisBonusName, clearedBonusName ]
 
 
 type alias BonusName =
     String
 
 
-type alias Board =
-    { score : Int
-    , gameOver : Bool
-    , clearedRows : List Int
-    , bonuses : Dict BonusName Time -- bonus name, when was the last time this bonus was achieved?
-    , speed : DropSpeed
-    , grid : Grid
-    , translate : Maybe Dir
-    , ghost : Maybe Tetromino
-    , tetromino : Maybe Tetromino -- should replace with a list of tetrominos
-    , held : Maybe ShapeName
-    , holdTimer : Time
-    , nextTetromino : Maybe ShapeName
+type alias BoardInfo a =
+    { a
+        | gameOver : Bool
+        , grid : Grid
+        , tetromino : Maybe Tetromino
+        , held : Maybe ShapeName
+        , nextTetromino : Maybe ShapeName -- replace with a list of tetrominos (7 to 14)
     }
+
+
+type alias OnlinePlayerInfo =
+    { score : Int
+    , clearedRows : List Int
+    , name : String
+    }
+
+
+type alias PlayerInfo =
+    { score : Int
+    , bonuses : Dict BonusName Time -- bonus name, when was the last time this bonus was achieved?
+    , clearedRows : List Int
+    , ghost : Maybe Tetromino
+    , speed : DropSpeed
+    , translate : Maybe Dir
+    , holdTimer : Time
+    }
+
+
+type alias Board =
+    BoardInfo PlayerInfo
 
 
 type alias Model =
@@ -432,16 +450,27 @@ view model =
                 )
             ]
           <|
-            [ div []
-                [ text <| "FPS: " ++ toString (round <| 1 / (Time.inSeconds model.dt)) ]
-            , div [ class "messages" ]
-                [ if model.paused then
-                    text "Paused!"
-                  else
-                    text ""
+            [ div [ class "title" ]
+                [ div [] [ text "Tetris for Two" ]
+                , div [ class "fps" ]
+                    [ text "A game by Hugo Rivera. FPS: ", text <| toString (round <| 1 / (Time.inSeconds model.dt)) ]
                 ]
+            , let
+                message =
+                    if model.paused then
+                        "Paused"
+                    else
+                        ""
+              in
+                if message == "" then
+                    text ""
+                else
+                    div [ class "messages" ]
+                        [ text message
+                        ]
+            , div [ class "boards" ]
+                (List.indexedMap (viewBoard <| min model.windowSize.width model.windowSize.height) model.boards)
             ]
-                ++ (List.indexedMap (viewBoard <| min model.windowSize.width model.windowSize.height) model.boards)
         ]
 
 
@@ -460,6 +489,20 @@ cellToAttrs cell =
 
 viewBoard minSize playerNum board =
     let
+        cleanEmptyRows name shape =
+            if name == "O" then
+                shape
+            else
+                let
+                    rows =
+                        Array2D.rows shape
+                in
+                    if name == "I" then
+                        Array2D.deleteRow (rows - 2) <|
+                            Array2D.deleteRow (rows - 1) shape
+                    else
+                        Array2D.deleteRow (rows - 1) shape
+
         drawTetromino i =
             case i of
                 Nothing ->
@@ -467,10 +510,17 @@ viewBoard minSize playerNum board =
 
                 Just name ->
                     case makeTetromino name 0 of
-                        Just tetrs ->
+                        Just tetr ->
                             Array.toList <|
                                 Array.map (div [] << Array.toList)
-                                    (Array2D.map (\cell -> div (List.map class <| cellToAttrs cell) []) tetrs.shape).data
+                                    (Array2D.map
+                                        (\cell ->
+                                            div (List.map class <| cellToAttrs cell)
+                                                []
+                                        )
+                                     <|
+                                        cleanEmptyRows name tetr.shape
+                                    ).data
 
                         Nothing ->
                             []
@@ -491,20 +541,25 @@ viewBoard minSize playerNum board =
                                 _ ->
                                     Nothing
 
-                        cellName =
-                            unwrapMaybeWith thisCellName
+                        tetrHere =
+                            unwrapMaybeWith Nothing
                                 (\tetr ->
-                                    -- if a tetromino exists
-                                    -- and it is located at this position, then draw it
-                                    case Array2D.get (row - pos2int tetr.pos.y) (col - pos2int tetr.pos.x) tetr.shape of
-                                        -- either there's a Full piece at this location
-                                        Just (Full shapeName) ->
-                                            Just shapeName
-
-                                        _ ->
-                                            thisCellName
+                                    Array2D.get (row - pos2int tetr.pos.y)
+                                        (col - pos2int tetr.pos.x)
+                                        tetr.shape
                                 )
                                 board.tetromino
+
+                        cellName =
+                            -- if a tetromino exists
+                            -- and it is located at this position, then draw it
+                            case tetrHere of
+                                -- either there's a Full piece at this location
+                                Just (Full shapeName) ->
+                                    Just shapeName
+
+                                _ ->
+                                    thisCellName
 
                         isGhost =
                             unwrapMaybeWith False
@@ -521,13 +576,14 @@ viewBoard minSize playerNum board =
                         attrs =
                             List.map class <|
                                 (if row < 2 then
-                                    [ "topMargin" ]
+                                    "topMargin" :: cellToAttrs cell
                                  else if isGhost then
-                                    [ "ghost", unwrapMaybeWith "" (\t -> "tetromino" ++ t.name) board.ghost ]
+                                    "ghost" :: cellToAttrs cell
+                                 else if tetrHere /= Nothing && tetrHere /= Just Empty then
+                                    cellToAttrs (Maybe.withDefault Empty tetrHere)
                                  else
                                     cellToAttrs cell
                                 )
-                                    ++ cellToAttrs cell
                     in
                         div attrs []
                 )
@@ -545,7 +601,6 @@ viewBoard minSize playerNum board =
                 [ text <|
                     "Player "
                         ++ (toString <| 1 + playerNum)
-                        ++ (List.foldl (\s t -> s ++ " " ++ t) "" <| Dict.keys board.bonuses)
                 ]
             , h3 [] [ text <| "Score " ++ toString board.score ]
             , div
@@ -570,13 +625,19 @@ viewBoard minSize playerNum board =
                 [ div [] [ text "Next:" ]
                 , div [ class "grid", class "next" ] <| drawTetromino board.nextTetromino
                 ]
-                    ++ (if isNothing board.held then
-                            []
-                        else
-                            [ div [] [ text "Holding: " ]
-                            , div [ class "grid", class "held" ] <| drawTetromino board.held
-                            ]
-                       )
+            , if isNothing board.held then
+                text ""
+              else
+                div [ class "info" ]
+                    [ div [] [ text "Holding: " ]
+                    , div [ class "grid", class "held" ] <| drawTetromino board.held
+                    ]
+            , if Dict.size board.bonuses == 0 then
+                text ""
+              else
+                h2 [ class "bonuses" ]
+                    [ text (List.foldl (\s t -> t ++ s ++ ". ") "" <| Dict.keys board.bonuses)
+                    ]
 
             {-
                , div []
@@ -609,7 +670,9 @@ update input ({ boards } as m) =
                     { m | boards = List.map2 (addTetromino) newNexts boards }
 
                 Tick tNew ->
-                    if not m.paused then
+                    if m.paused then
+                        m
+                    else
                         let
                             newdt =
                                 unwrapMaybeWith 0.01 (\tPrev -> tNew - tPrev) m.tPrev
@@ -619,24 +682,25 @@ update input ({ boards } as m) =
                                 , tPrev = Just tNew
                                 , boards = List.map ((\b -> { b | holdTimer = b.holdTimer + Time.inSeconds newdt }) << updateScore tNew << updateGhost << dropTetromino newdt << translateTetromino newdt << (\b -> { b | clearedRows = [] })) boards
                             }
-                    else
-                        m
 
                 Pause ->
                     { m | paused = not m.paused }
 
                 PlayerInputs n ps ->
-                    { m
-                        | boards =
-                            List.indexedMap
-                                (\playerNum board ->
-                                    if playerNum == n then
-                                        processInput m.dt ps board
-                                    else
-                                        board
-                                )
-                                boards
-                    }
+                    if m.paused then
+                        m
+                    else
+                        { m
+                            | boards =
+                                List.indexedMap
+                                    (\playerNum board ->
+                                        if playerNum == n then
+                                            processInput m.dt ps board
+                                        else
+                                            board
+                                    )
+                                    boards
+                        }
 
                 None ->
                     m
@@ -830,7 +894,16 @@ clearRows ({ grid } as board) =
 addScore t ({ clearedRows, bonuses } as board) =
     let
         gotTetris =
-            List.length clearedRows >= 4
+            rows >= 4
+
+        rows =
+            List.length clearedRows
+
+        allCleared =
+            (rows > 0)
+                && Array.foldl (\b acc -> (Array.foldl (\b acc -> b && acc) True b) && acc)
+                    True
+                    (Array2D.map (\c -> c == Empty || c == Edge) board.grid).data
     in
         { board
             | score =
@@ -842,16 +915,22 @@ addScore t ({ clearedRows, bonuses } as board) =
                       )
                     * List.length clearedRows
             , bonuses =
-                (if List.length clearedRows > 0 then
-                    Dict.insert rowClearedBonusName t
+                (if allCleared then
+                    Dict.insert clearedBonusName t
                  else
-                    \t -> t
+                    \x -> x
                 )
                 <|
-                    if gotTetris then
-                        Dict.insert tetrisBonusName t bonuses
-                    else
-                        bonuses
+                    (if rows > 0 then
+                        Dict.insert (rowClearedBonusName rows) t
+                     else
+                        \x -> x
+                    )
+                    <|
+                        if gotTetris then
+                            Dict.insert tetrisBonusName t bonuses
+                        else
+                            bonuses
         }
 
 
