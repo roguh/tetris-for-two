@@ -1,4 +1,5 @@
 #!/bin/sh
-JS_BUILD=main.js
+JS_BUILD=./main.js
+set -x
+mkdir -p "$(dirname "$JS_BUILD")"
 elm-make --warn Main.elm --output=$JS_BUILD
-closure-compiler --js $JS_BUILD --compilation_level ADVANCED_OPTIMIZATIONS --js_output_file compiled.$JS_BUILD 

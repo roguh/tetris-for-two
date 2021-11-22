@@ -430,10 +430,11 @@ downControls key =
             ]
             key
 
+elm_class = class "elm"
 
 view : Model -> Html Input
 view model =
-    Html.body []
+    Html.body [ elm_class ]
         [ Html.node "link"
             [ Html.Attributes.rel "stylesheet"
             , Html.Attributes.href "style.css"
@@ -450,7 +451,7 @@ view model =
                 )
             ]
           <|
-            [ div [ class "title" ]
+            [ div [ class "title", elm_class ]
                 [ div [] [ text "Tetris for Two" ]
                 , div [ class "fps" ]
                     [ text "A game by Hugo Rivera. FPS: ", text <| toString (round <| 1 / (Time.inSeconds model.dt)) ]
@@ -597,12 +598,12 @@ viewBoard minSize playerNum board =
             , class "board"
             ]
         <|
-            [ h2 []
+            [ h2 [ elm_class ]
                 [ text <|
                     "Player "
                         ++ (toString <| 1 + playerNum)
                 ]
-            , h3 [] [ text <| "Score " ++ toString board.score ]
+            , h3 [ elm_class ] [ text <| "Score " ++ toString board.score ]
             , div
                 [ class "grid"
                 , style [ ( "font-size", (toString <| minSize // boardHeight // 2) ++ "px" ) ]

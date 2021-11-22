@@ -5,7 +5,11 @@ body {
     background-color: black;
 }
 
-main h2, main h3 {
+.elm {
+    color: black;
+}
+
+main h2.elm, main h3.elm {
     margin: 0;
 }
 
@@ -31,7 +35,7 @@ main h2, main h3 {
     animation: 0.2s ease-in-out 0s bigbounce;
 }
 
-.title {
+.elm.title {
     font-size: 2em;
     font-family: monospace;
     font-weight: bold;
@@ -54,6 +58,22 @@ main h2, main h3 {
 
 .info > div { 
     display: inline-block;
+}
+
+#team1.info {
+  color: black;
+}
+
+#team2.info {
+  color: white;
+}
+
+#team1 h2 {
+  color: black;
+}
+
+#team2 h2 {
+  color: white;
 }
 
 .held .cell {
