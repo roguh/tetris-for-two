@@ -69,4 +69,4 @@ Build by running:
 ./build.sh
 ```
 
-Output will be in `./main.js`.
+Output will be in `./main.js`. You need to load `style.css`.
